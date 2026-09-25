@@ -1,5 +1,6 @@
 #include "yuv.h"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -43,6 +44,35 @@ namespace
     {
         const std::int64_t weighted = 500000 * r - 418688 * g - 81312 * b;
         return clampByte(128 + roundDiv(224 * weighted, 4 * 255000000LL), 16, 240);
+    }
+
+    bool validYuv420(const Yuv420Image &image)
+    {
+        if (image.width == 0 || image.height == 0 ||
+            image.width % 2 != 0 || image.height % 2 != 0 ||
+            image.width > std::numeric_limits<std::size_t>::max() / image.height)
+        {
+            return false;
+        }
+
+        const std::size_t ySize = image.width * image.height;
+        const std::size_t chromaSize = ySize / 4;
+        return image.y.size() == ySize &&
+               image.u.size() == chromaSize && image.v.size() == chromaSize;
+    }
+
+    void copyPlane(std::vector<std::uint8_t> &destination, std::size_t destinationWidth,
+                   const std::vector<std::uint8_t> &source, std::size_t sourceWidth,
+                   std::size_t sourceHeight, std::size_t x, std::size_t y)
+    {
+        for (std::size_t row = 0; row < sourceHeight; ++row)
+        {
+            const std::size_t sourceOffset = row * sourceWidth;
+            const std::size_t destinationOffset = (y + row) * destinationWidth + x;
+            std::copy(source.begin() + sourceOffset,
+                      source.begin() + sourceOffset + sourceWidth,
+                      destination.begin() + destinationOffset);
+        }
     }
 }
 
@@ -100,4 +130,32 @@ Yuv420Image rgbToYuv420(const RgbImage &image)
     }
 
     return result;
+}
+
+void overlayYuv420(Yuv420Image &frame, const Yuv420Image &image,
+                   std::size_t x, std::size_t y)
+{
+    if (!validYuv420(frame) || !validYuv420(image))
+    {
+        throw std::invalid_argument("Некорректные размеры или плоскости YUV420");
+    }
+    if (x % 2 != 0 || y % 2 != 0)
+    {
+        throw std::invalid_argument("Координаты наложения должны быть чётными");
+    }
+    if (image.width > frame.width || image.height > frame.height ||
+        x > frame.width - image.width || y > frame.height - image.height)
+    {
+        throw std::out_of_range("Картинка выходит за границы кадра");
+    }
+    if (&frame == &image)
+    {
+        return;
+    }
+
+    copyPlane(frame.y, frame.width, image.y, image.width, image.height, x, y);
+    copyPlane(frame.u, frame.width / 2, image.u, image.width / 2,
+              image.height / 2, x / 2, y / 2);
+    copyPlane(frame.v, frame.width / 2, image.v, image.width / 2,
+              image.height / 2, x / 2, y / 2);
 }

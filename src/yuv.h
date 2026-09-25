@@ -18,5 +18,7 @@ struct Yuv420Image
 };
 
 Yuv420Image rgbToYuv420(const RgbImage &image);
+void overlayYuv420(Yuv420Image &frame, const Yuv420Image &image,
+                   std::size_t x, std::size_t y);
 
 #endif
