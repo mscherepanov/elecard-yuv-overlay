@@ -10,7 +10,7 @@ struct RgbImage
 {
     std::size_t width;
     std::size_t height;
-    // Строки идут сверху вниз; каждый пиксель хранится как R, G, B
+
     std::vector<std::uint8_t> pixels;
 };
 

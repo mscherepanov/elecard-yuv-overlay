@@ -7,7 +7,6 @@
 
 namespace
 {
-
     std::uint16_t read16(const std::array<std::uint8_t, 54> &header, std::size_t offset)
     {
         return static_cast<std::uint16_t>(header[offset]) |
@@ -21,7 +20,6 @@ namespace
                static_cast<std::uint32_t>(header[offset + 2]) << 16 |
                static_cast<std::uint32_t>(header[offset + 3]) << 24;
     }
-
 } // namespace
 
 RgbImage readBmp(const std::string &path)
@@ -91,7 +89,6 @@ RgbImage readBmp(const std::string &path)
             throw std::runtime_error("Не удалось прочитать пиксели BMP: " + path);
         }
 
-        // BMP хранит пиксели как BGR и обычно записывает строки снизу вверх
         const std::size_t outputRow = topDown ? fileRow : image.height - 1 - fileRow;
         for (std::size_t x = 0; x < image.width; ++x)
         {
