@@ -6,6 +6,7 @@ add_executable(yuv-overlay
     src/main.cpp
     src/bmp.cpp
     src/yuv.cpp
+    src/video.cpp
 )
 
 set_target_properties(yuv-overlay PROPERTIES
