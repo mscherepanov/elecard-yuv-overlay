@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 
 project(elecard_yuv_overlay LANGUAGES CXX)
 
-add_executable(yuv-overlay src/main.cpp)
+add_executable(yuv-overlay
+    src/main.cpp
+    src/bmp.cpp
+)
 
 set_target_properties(yuv-overlay PROPERTIES
     CXX_STANDARD 11
