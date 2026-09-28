@@ -18,3 +18,22 @@ set_target_properties(yuv-overlay PROPERTIES
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(yuv-overlay PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+enable_testing()
+
+add_executable(yuv-overlay-tests
+    tests/tests.cpp
+    src/bmp.cpp
+    src/yuv.cpp
+    src/video.cpp
+)
+target_include_directories(yuv-overlay-tests PRIVATE src)
+set_target_properties(yuv-overlay-tests PROPERTIES
+    CXX_STANDARD 11
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(yuv-overlay-tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME yuv-overlay-tests COMMAND yuv-overlay-tests)
