@@ -6,14 +6,13 @@
 #include <string>
 #include <vector>
 
-struct RgbImage
-{
+struct RgbImage {
     std::size_t width;
     std::size_t height;
 
     std::vector<std::uint8_t> pixels;
 };
 
-RgbImage readBmp(const std::string &path);
+RgbImage readBmp(const std::string& path);
 
 #endif
