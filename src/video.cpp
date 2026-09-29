@@ -86,7 +86,7 @@ std::uintmax_t processVideo(const std::string &inputPath,
         throw std::runtime_error("Не удалось перейти к началу входного YUV-файла");
     }
 
-    const Yuv420Image image = rgbToYuv420(readBmp(imagePath));
+    const Yuv420Image image = rgbToYuv420Threaded(readBmp(imagePath));
     Yuv420Image frame = {width, height,
                          std::vector<std::uint8_t>(ySize),
                          std::vector<std::uint8_t>(chromaSize),

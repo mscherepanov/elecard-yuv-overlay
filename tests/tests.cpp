@@ -136,6 +136,21 @@ namespace
                     yuv.v == std::vector<std::uint8_t>({128}),
                 "YUV: усреднение 2x2");
 
+        const Yuv420Image small = rgbToYuv420Threaded(rgb, 4);
+        require(small.y == yuv.y && small.u == yuv.u && small.v == yuv.v,
+                "YUV: скалярный fallback");
+
+        RgbImage patterned = {514, 258, std::vector<std::uint8_t>(514 * 258 * 3)};
+        for (std::size_t i = 0; i < patterned.pixels.size(); ++i)
+        {
+            patterned.pixels[i] = static_cast<std::uint8_t>((i * 37 + i / 7) % 256);
+        }
+        const Yuv420Image scalar = rgbToYuv420(patterned);
+        const Yuv420Image threaded = rgbToYuv420Threaded(patterned, 2);
+        require(threaded.y == scalar.y && threaded.u == scalar.u &&
+                    threaded.v == scalar.v,
+                "YUV: многопоточный результат отличается от скалярного");
+
         bool rejected = false;
         try
         {

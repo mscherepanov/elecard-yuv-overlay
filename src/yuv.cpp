@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
 namespace
 {
@@ -46,6 +47,81 @@ namespace
         return clampByte(128 + roundDiv(224 * weighted, 4 * 255000000LL), 16, 240);
     }
 
+    void validateRgb(const RgbImage &image)
+    {
+        if (image.width == 0 || image.height == 0 ||
+            image.width % 2 != 0 || image.height % 2 != 0)
+        {
+            throw std::invalid_argument("Размеры RGB-изображения должны быть положительными и чётными");
+        }
+
+        const std::size_t maxSize = std::numeric_limits<std::size_t>::max();
+        if (image.width > maxSize / image.height ||
+            image.width * image.height > maxSize / 3 ||
+            image.pixels.size() != image.width * image.height * 3)
+        {
+            throw std::invalid_argument("Некорректный размер данных RGB-изображения");
+        }
+    }
+
+    Yuv420Image allocateYuv(const RgbImage &image)
+    {
+        const std::size_t ySize = image.width * image.height;
+        const std::size_t chromaSize = ySize / 4;
+        return {image.width, image.height,
+                std::vector<std::uint8_t>(ySize),
+                std::vector<std::uint8_t>(chromaSize),
+                std::vector<std::uint8_t>(chromaSize)};
+    }
+
+    void convertBlockRows(const RgbImage &image, Yuv420Image &result,
+                          std::size_t first, std::size_t last)
+    {
+        // Каждый диапазон содержит целые строки блоков 2x2 и независимые элементы U/V.
+        for (std::size_t blockRow = first; blockRow < last; ++blockRow)
+        {
+            const std::size_t row = blockRow * 2;
+            for (std::size_t col = 0; col < image.width; col += 2)
+            {
+                const std::size_t firstPixel = (row * image.width + col) * 3;
+                const std::size_t indices[4] = {firstPixel, firstPixel + 3,
+                                                firstPixel + image.width * 3,
+                                                firstPixel + image.width * 3 + 3};
+                std::int64_t sumR = 0;
+                std::int64_t sumG = 0;
+                std::int64_t sumB = 0;
+
+                for (std::size_t i = 0; i < 4; ++i)
+                {
+                    const std::size_t source = indices[i];
+                    const std::size_t target = (row + i / 2) * image.width + col + i % 2;
+                    const std::uint8_t r = image.pixels[source];
+                    const std::uint8_t g = image.pixels[source + 1];
+                    const std::uint8_t b = image.pixels[source + 2];
+                    result.y[target] = luma(r, g, b);
+                    sumR += r;
+                    sumG += g;
+                    sumB += b;
+                }
+
+                const std::size_t chromaIndex = blockRow * (image.width / 2) + col / 2;
+                result.u[chromaIndex] = chromaU(sumR, sumG, sumB);
+                result.v[chromaIndex] = chromaV(sumR, sumG, sumB);
+            }
+        }
+    }
+
+    void joinThreads(std::vector<std::thread> &threads)
+    {
+        for (std::size_t i = 0; i < threads.size(); ++i)
+        {
+            if (threads[i].joinable())
+            {
+                threads[i].join();
+            }
+        }
+    }
+
     bool validYuv420(const Yuv420Image &image)
     {
         if (image.width == 0 || image.height == 0 ||
@@ -78,57 +154,51 @@ namespace
 
 Yuv420Image rgbToYuv420(const RgbImage &image)
 {
-    if (image.width == 0 || image.height == 0 || image.width % 2 != 0 || image.height % 2 != 0)
+    validateRgb(image);
+    Yuv420Image result = allocateYuv(image);
+    convertBlockRows(image, result, 0, image.height / 2);
+    return result;
+}
+
+Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount)
+{
+    validateRgb(image);
+
+    const std::size_t requested = workerCount == 0
+                                      ? std::thread::hardware_concurrency()
+                                      : workerCount;
+    const std::size_t blockRows = image.height / 2;
+    const std::size_t useful = image.width * image.height / 65536;
+    const std::size_t workers = std::min(requested, std::min(blockRows, useful));
+    if (workers < 2)
     {
-        throw std::invalid_argument("Размеры RGB-изображения должны быть положительными и чётными");
+        return rgbToYuv420(image);
     }
 
-    const std::size_t maxSize = std::numeric_limits<std::size_t>::max();
-    if (image.width > maxSize / image.height ||
-        image.width * image.height > maxSize / 3 ||
-        image.pixels.size() != image.width * image.height * 3)
-    {
-        throw std::invalid_argument("Некорректный размер данных RGB-изображения");
-    }
+    Yuv420Image result = allocateYuv(image);
+    std::vector<std::thread> threads;
+    threads.reserve(workers - 1);
 
-    const std::size_t ySize = image.width * image.height;
-    const std::size_t chromaSize = ySize / 4;
-    Yuv420Image result = {image.width, image.height,
-                          std::vector<std::uint8_t>(ySize),
-                          std::vector<std::uint8_t>(chromaSize),
-                          std::vector<std::uint8_t>(chromaSize)};
-
-    for (std::size_t row = 0; row < image.height; row += 2)
+    const std::size_t rowsPerWorker = blockRows / workers;
+    const std::size_t extraRows = blockRows % workers;
+    std::size_t begin = 0;
+    try
     {
-        for (std::size_t col = 0; col < image.width; col += 2)
+        for (std::size_t i = 0; i + 1 < workers; ++i)
         {
-            const std::size_t first = (row * image.width + col) * 3;
-            const std::size_t indices[4] = {first, first + 3,
-                                            first + image.width * 3,
-                                            first + image.width * 3 + 3};
-            std::int64_t sumR = 0;
-            std::int64_t sumG = 0;
-            std::int64_t sumB = 0;
-
-            for (std::size_t i = 0; i < 4; ++i)
-            {
-                const std::size_t source = indices[i];
-                const std::size_t target = (row + i / 2) * image.width + col + i % 2;
-                const std::uint8_t r = image.pixels[source];
-                const std::uint8_t g = image.pixels[source + 1];
-                const std::uint8_t b = image.pixels[source + 2];
-                result.y[target] = luma(r, g, b);
-                sumR += r;
-                sumG += g;
-                sumB += b;
-            }
-
-            const std::size_t chromaIndex = (row / 2) * (image.width / 2) + col / 2;
-            result.u[chromaIndex] = chromaU(sumR, sumG, sumB);
-            result.v[chromaIndex] = chromaV(sumR, sumG, sumB);
+            const std::size_t end = begin + rowsPerWorker + (i < extraRows ? 1 : 0);
+            threads.emplace_back([&image, &result, begin, end]()
+                                 { convertBlockRows(image, result, begin, end); });
+            begin = end;
         }
+        convertBlockRows(image, result, begin, blockRows);
     }
-
+    catch (...)
+    {
+        joinThreads(threads);
+        throw;
+    }
+    joinThreads(threads);
     return result;
 }
 

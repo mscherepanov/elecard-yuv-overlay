@@ -18,6 +18,7 @@ struct Yuv420Image
 };
 
 Yuv420Image rgbToYuv420(const RgbImage &image);
+Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount = 0);
 void overlayYuv420(Yuv420Image &frame, const Yuv420Image &image,
                    std::size_t x, std::size_t y);
 
