@@ -5,6 +5,10 @@
 #include <stdexcept>
 #include <thread>
 
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#include <tmmintrin.h>
+#endif
+
 namespace
 {
     std::int64_t roundDiv(std::int64_t numerator, std::int64_t denominator)
@@ -77,7 +81,6 @@ namespace
     void convertBlockRows(const RgbImage &image, Yuv420Image &result,
                           std::size_t first, std::size_t last)
     {
-        // Каждый диапазон содержит целые строки блоков 2x2 и независимые элементы U/V.
         for (std::size_t blockRow = first; blockRow < last; ++blockRow)
         {
             const std::size_t row = blockRow * 2;
@@ -109,6 +112,138 @@ namespace
                 result.v[chromaIndex] = chromaV(sumR, sumG, sumB);
             }
         }
+    }
+
+    typedef void (*ConvertRows)(const RgbImage &, Yuv420Image &,
+                                std::size_t, std::size_t);
+
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+    __attribute__((target("ssse3")))
+    __m128i lumaFourSsse3(__m128i weighted)
+    {
+        const __m128i numerator = _mm_add_epi32(
+            _mm_sub_epi32(
+                _mm_sub_epi32(
+                    _mm_sub_epi32(_mm_slli_epi32(weighted, 8),
+                                  _mm_slli_epi32(weighted, 5)),
+                    _mm_slli_epi32(weighted, 2)),
+                weighted),
+            _mm_set1_epi32(127500));
+        const __m128i multiplier = _mm_set1_epi32(1103823439);
+        const __m128i even = _mm_srli_epi64(_mm_mul_epu32(numerator, multiplier), 48);
+        const __m128i odd = _mm_srli_epi64(
+            _mm_mul_epu32(_mm_srli_si128(numerator, 4), multiplier), 48);
+        const __m128i low = _mm_unpacklo_epi32(even, odd);
+        const __m128i high = _mm_unpackhi_epi32(even, odd);
+        return _mm_add_epi32(_mm_unpacklo_epi64(low, high), _mm_set1_epi32(16));
+    }
+
+    __attribute__((target("ssse3"))) void convertLumaRowSsse3(const std::uint8_t *source, std::uint8_t *destination,
+                                                              std::size_t width)
+    {
+        const __m128i zero = _mm_setzero_si128();
+        const __m128i rgWeights = _mm_setr_epi16(299, 587, 299, 587,
+                                                 299, 587, 299, 587);
+        const __m128i bWeights = _mm_setr_epi16(114, 0, 114, 0,
+                                                114, 0, 114, 0);
+        const __m128i rLowMask = _mm_setr_epi8(
+            0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m128i rHighMask = _mm_setr_epi8(
+            -1, -1, -1, -1, -1, -1, 2, 5, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m128i gLowMask = _mm_setr_epi8(
+            1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m128i gHighMask = _mm_setr_epi8(
+            -1, -1, -1, -1, -1, 0, 3, 6, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m128i bLowMask = _mm_setr_epi8(
+            2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m128i bHighMask = _mm_setr_epi8(
+            -1, -1, -1, -1, -1, 1, 4, 7, -1, -1, -1, -1, -1, -1, -1, -1);
+
+        std::size_t col = 0;
+        for (; col + 8 <= width; col += 8)
+        {
+            const std::uint8_t *pixels = source + col * 3;
+            const __m128i low = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pixels));
+            const __m128i high = _mm_loadl_epi64(
+                reinterpret_cast<const __m128i *>(pixels + 16));
+            const __m128i r = _mm_unpacklo_epi8(
+                _mm_or_si128(_mm_shuffle_epi8(low, rLowMask),
+                             _mm_shuffle_epi8(high, rHighMask)),
+                zero);
+            const __m128i g = _mm_unpacklo_epi8(
+                _mm_or_si128(_mm_shuffle_epi8(low, gLowMask),
+                             _mm_shuffle_epi8(high, gHighMask)),
+                zero);
+            const __m128i b = _mm_unpacklo_epi8(
+                _mm_or_si128(_mm_shuffle_epi8(low, bLowMask),
+                             _mm_shuffle_epi8(high, bHighMask)),
+                zero);
+
+            const __m128i first = _mm_add_epi32(
+                _mm_madd_epi16(_mm_unpacklo_epi16(r, g), rgWeights),
+                _mm_madd_epi16(_mm_unpacklo_epi16(b, zero), bWeights));
+            const __m128i second = _mm_add_epi32(
+                _mm_madd_epi16(_mm_unpackhi_epi16(r, g), rgWeights),
+                _mm_madd_epi16(_mm_unpackhi_epi16(b, zero), bWeights));
+            const __m128i y = _mm_packus_epi16(
+                _mm_packs_epi32(lumaFourSsse3(first), lumaFourSsse3(second)),
+                zero);
+            _mm_storel_epi64(reinterpret_cast<__m128i *>(destination + col), y);
+        }
+
+        for (; col < width; ++col)
+        {
+            const std::size_t pixel = col * 3;
+            destination[col] = luma(source[pixel], source[pixel + 1], source[pixel + 2]);
+        }
+    }
+
+    __attribute__((target("ssse3"))) void convertBlockRowsSsse3(const RgbImage &image, Yuv420Image &result,
+                                                                std::size_t first, std::size_t last)
+    {
+        for (std::size_t blockRow = first; blockRow < last; ++blockRow)
+        {
+            const std::size_t row = blockRow * 2;
+            const std::size_t firstPixel = row * image.width * 3;
+            const std::size_t firstY = row * image.width;
+            convertLumaRowSsse3(image.pixels.data() + firstPixel,
+                                result.y.data() + firstY, image.width);
+            convertLumaRowSsse3(image.pixels.data() + firstPixel + image.width * 3,
+                                result.y.data() + firstY + image.width, image.width);
+
+            for (std::size_t col = 0; col < image.width; col += 2)
+            {
+                const std::size_t pixel = firstPixel + col * 3;
+                const std::size_t indices[4] = {pixel, pixel + 3,
+                                                pixel + image.width * 3,
+                                                pixel + image.width * 3 + 3};
+                std::int64_t sumR = 0;
+                std::int64_t sumG = 0;
+                std::int64_t sumB = 0;
+                for (std::size_t i = 0; i < 4; ++i)
+                {
+                    sumR += image.pixels[indices[i]];
+                    sumG += image.pixels[indices[i] + 1];
+                    sumB += image.pixels[indices[i] + 2];
+                }
+                const std::size_t chroma = blockRow * (image.width / 2) + col / 2;
+                result.u[chroma] = chromaU(sumR, sumG, sumB);
+                result.v[chroma] = chromaV(sumR, sumG, sumB);
+            }
+        }
+    }
+#endif
+
+    ConvertRows preferredConverter(const RgbImage &image)
+    {
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+        if (image.width >= 8 && image.width * image.height >= 4096 &&
+            __builtin_cpu_supports("ssse3"))
+        {
+            return convertBlockRowsSsse3;
+        }
+#endif
+        return convertBlockRows;
     }
 
     void joinThreads(std::vector<std::thread> &threads)
@@ -164,6 +299,7 @@ Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount)
 {
     validateRgb(image);
 
+    const ConvertRows convertRows = preferredConverter(image);
     const std::size_t requested = workerCount == 0
                                       ? std::thread::hardware_concurrency()
                                       : workerCount;
@@ -172,7 +308,13 @@ Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount)
     const std::size_t workers = std::min(requested, std::min(blockRows, useful));
     if (workers < 2)
     {
-        return rgbToYuv420(image);
+        if (convertRows == convertBlockRows)
+        {
+            return rgbToYuv420(image);
+        }
+        Yuv420Image result = allocateYuv(image);
+        convertRows(image, result, 0, blockRows);
+        return result;
     }
 
     Yuv420Image result = allocateYuv(image);
@@ -187,11 +329,11 @@ Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount)
         for (std::size_t i = 0; i + 1 < workers; ++i)
         {
             const std::size_t end = begin + rowsPerWorker + (i < extraRows ? 1 : 0);
-            threads.emplace_back([&image, &result, begin, end]()
-                                 { convertBlockRows(image, result, begin, end); });
+            threads.emplace_back([&image, &result, convertRows, begin, end]()
+                                 { convertRows(image, result, begin, end); });
             begin = end;
         }
-        convertBlockRows(image, result, begin, blockRows);
+        convertRows(image, result, begin, blockRows);
     }
     catch (...)
     {
@@ -199,6 +341,19 @@ Yuv420Image rgbToYuv420Threaded(const RgbImage &image, unsigned workerCount)
         throw;
     }
     joinThreads(threads);
+    return result;
+}
+
+Yuv420Image rgbToYuv420Simd(const RgbImage &image)
+{
+    validateRgb(image);
+    const ConvertRows convertRows = preferredConverter(image);
+    if (convertRows == convertBlockRows)
+    {
+        return rgbToYuv420(image);
+    }
+    Yuv420Image result = allocateYuv(image);
+    convertRows(image, result, 0, image.height / 2);
     return result;
 }
 
