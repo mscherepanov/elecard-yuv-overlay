@@ -67,6 +67,7 @@ ctest --test-dir build --output-on-failure
 .
 ├── CMakeLists.txt
 ├── README.md
+├── CHANGELOG.md
 ├── LICENSE
 ├── src
 │   ├── main.cpp     # аргументы командной строки

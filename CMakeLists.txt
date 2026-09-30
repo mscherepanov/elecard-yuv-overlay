@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(elecard_yuv_overlay LANGUAGES CXX)
+project(elecard_yuv_overlay
+    VERSION 1.0.0
+    DESCRIPTION "Наложение RGB24 BMP на видео YUV420"
+    LANGUAGES CXX
+)
 
 find_package(Threads REQUIRED)
 
