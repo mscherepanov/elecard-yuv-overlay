@@ -1,0 +1,14 @@
+BasedOnStyle: LLVM
+Standard: c++11
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+NamespaceIndentation: None
+ColumnLimit: 100
+BreakBeforeBraces: Attach
+PointerAlignment: Left
+ReferenceAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+IncludeBlocks: Regroup
+SpaceAfterCStyleCast: true
